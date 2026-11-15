@@ -100,6 +100,7 @@ body.phase-night .panel,body.phase-night .game-card{border-color:#3b405c}
  <img id="cardPhotoPreview" alt="รูปการ์ด" style="display:none;max-width:100%;max-height:300px;border-radius:10px">
  <p id="cardStatus" class="game-muted">ยังไม่ได้เลือกรูป</p>
  <label>ข้อความอังกฤษบนการ์ด</label><textarea id="cardEN" placeholder="พิมพ์ข้อความบนการ์ด หรือแก้ข้อความที่ OCR อ่านได้" style="min-height:120px"></textarea>
+ <div class="game-card" style="margin:12px 0;border:1px solid #d6b36b;padding:12px;border-radius:12px"><h3>✨ AI แปลการ์ดจากรูป — เวอร์ชันใหม่</h3><p class="game-muted">ถ่ายรูปด้านบน แล้วกด AI อ่านภาพและแปล หรือพิมพ์ข้อความอังกฤษเพื่อแปลก็ได้ ต้องเชื่อมต่อบริการ AI ผ่านเซิร์ฟเวอร์ HTTPS ส่วนตัว (ไม่มีการเก็บรหัส API ในเว็บ)</p><label for="cardAIEndpoint">ที่อยู่บริการแปลการ์ด HTTPS</label><input id="cardAIEndpoint" type="url" placeholder="https://ชื่อ-worker.workers.dev" style="width:100%;box-sizing:border-box" autocomplete="url"><div class="game-row"><button type="button" class="secondary" onclick="cardAISettings()">บันทึกที่อยู่บริการ</button><button type="button" id="cardAIButton" onclick="cardAITranslate()">✨ AI อ่านภาพและแปลไทย</button><button type="button" class="secondary" onclick="cardAIStop()">ยกเลิก</button></div><p id="cardAIStatus" class="game-muted" role="status" aria-live="polite">ยังไม่ได้เชื่อมต่อบริการ AI • ระบบแปลออฟไลน์และคลังการ์ดยังใช้งานได้</p><p class="game-muted">AI อาจอ่านตัวเลขหรือเงื่อนไขผิด โปรดเทียบกับการ์ดจริงก่อนเล่น และกด “บันทึกการ์ด” เพื่อเก็บคำแปลไว้ในเครื่อง</p></div>
  <div class="game-row"><button type="button" onclick="cardTranslate()">ช่วยแปลออฟไลน์</button><button type="button" class="secondary" onclick="cardSpeak()">🔊 อ่านคำแปล</button></div>
  <p class="game-muted">การแปลออฟไลน์รองรับคำศัพท์และคำสั่งเกมบางรูปแบบ ไม่ใช่เครื่องแปลทุกประโยค ข้อความที่แปลไม่ครบจะถูกแจ้งเตือนให้ตรวจสอบกับต้นฉบับ</p>
  <label>คำแปลไทย (แก้ไขและตรวจทานได้)</label><textarea id="cardTH" style="min-height:150px" placeholder="คำแปลภาษาไทย"></textarea>
@@ -527,4 +528,37 @@ musicSetVolume=function(){aiOriginalMusicSetVolume();if(aiSpeaking&&$('aiDuck').
 const aiOriginalRender=render;
 render=function(n,push=true){aiOriginalRender(n,push);if($('aiAuto').checked&&$('aiEndpoint').value.trim()&&data[$('num').value]?.text)aiSpeakStory()};
 aiLoadSettings();
-</script><script>if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('Service worker:',err)));}</script></body></html>
+</script><script>if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('Service worker:',err)));}</script><script>
+// Card AI v2: sends the selected photo or entered text only to the configured HTTPS service.
+const CARD_AI_ENDPOINT_KEY='twom-card-ai-endpoint-v2';
+let cardAIFile=null,cardAIAbort=null;
+(function(){const old=window.cardPhoto;window.cardPhoto=function(e){const f=e.target.files&&e.target.files[0];if(f&&f.type.startsWith('image/'))cardAIFile=f;return old(e)};
+ const oldClear=window.cardClear;window.cardClear=function(){cardAIFile=null;return oldClear()};
+ try{document.getElementById('cardAIEndpoint').value=localStorage.getItem(CARD_AI_ENDPOINT_KEY)||''}catch(e){}
+})();
+function cardAIStatus(msg){document.getElementById('cardAIStatus').textContent=msg}
+function cardAISettings(){const v=document.getElementById('cardAIEndpoint').value.trim().replace(/\/+$/,'');if(v&&!/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/.*)?$/i.test(v)){cardAIStatus('ต้องเป็นที่อยู่ HTTPS เท่านั้น');return false}try{localStorage.setItem(CARD_AI_ENDPOINT_KEY,v)}catch(e){}cardAIStatus(v?'บันทึกที่อยู่บริการแล้ว':'ล้างที่อยู่บริการแล้ว');return true}
+function cardAIStop(){if(cardAIAbort){cardAIAbort.abort();cardAIAbort=null}cardAIStatus('ยกเลิกคำขอแล้ว');document.getElementById('cardAIButton').disabled=false}
+async function cardAIImage(file){
+ if(file.size>12*1024*1024)throw Error('รูปใหญ่เกิน 12 MB');
+ const bitmap=await createImageBitmap(file);const max=1400,ratio=Math.min(1,max/Math.max(bitmap.width,bitmap.height));const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*ratio);canvas.height=Math.round(bitmap.height*ratio);canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close?.();return canvas.toDataURL('image/jpeg',0.78);
+}
+async function cardAITranslate(){
+ const endpoint=document.getElementById('cardAIEndpoint').value.trim().replace(/\/+$/,'');
+ if(!cardAISettings()||!endpoint)return cardAIStatus('กรุณากรอกที่อยู่บริการแปล AI ก่อน');
+ const english=document.getElementById('cardEN').value.trim();if(!cardAIFile&&!english)return cardAIStatus('กรุณาถ่ายรูปการ์ด หรือพิมพ์ข้อความอังกฤษก่อน');
+ if(cardAIAbort)cardAIAbort.abort();const controller=new AbortController();cardAIAbort=controller;
+ const btn=document.getElementById('cardAIButton');btn.disabled=true;cardAIStatus('กำลังอ่านภาพและแปลการ์ด...');
+ try{const image=cardAIFile?await cardAIImage(cardAIFile):null;
+ const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,text:english,language:'th',task:'twom-card-translation'}),signal:controller.signal});
+ const raw=await res.text();let data;try{data=JSON.parse(raw)}catch(e){throw Error('เซิร์ฟเวอร์ตอบกลับไม่ใช่ JSON (HTTP '+res.status+')')}
+ if(!res.ok)throw Error(data.error||('HTTP '+res.status));
+ if(!data||typeof data.translation!=='string'||!data.translation.trim())throw Error('ไม่มีคำแปลในผลลัพธ์');
+ if(typeof data.english==='string'&&data.english.trim())document.getElementById('cardEN').value=data.english.trim().slice(0,12000);
+ document.getElementById('cardTH').value=data.translation.trim().slice(0,12000)+(data.howToPlay?'\n\n🎲 วิธีเล่นแบบเข้าใจง่าย\n'+String(data.howToPlay).slice(0,3000):'')+(data.warning?'\n\n⚠️ จุดที่ควรตรวจสอบ\n'+String(data.warning).slice(0,1200):'');
+ if(data.title&&!document.getElementById('cardTitle').value.trim())document.getElementById('cardTitle').value=String(data.title).slice(0,100);
+ cardAIStatus('แปลเสร็จแล้ว! ตรวจตัวเลขและเงื่อนไขก่อนกด 💾 บันทึกการ์ด เพื่อใช้ออฟไลน์');
+ }catch(e){cardAIStatus(e.name==='AbortError'?'ยกเลิกแล้ว':'แปลไม่สำเร็จ: '+e.message+' — ยังใช้แปลออฟไลน์หรือพิมพ์เองได้')}
+ finally{if(cardAIAbort===controller)cardAIAbort=null;btn.disabled=false}
+}
+</script></body></html>
